@@ -42,7 +42,7 @@ from src.grid_api import (
 # snapshots readable while still operating on integers internally.
 DISPLAY_SYMBOL: Dict[int, str] = {
     FREE: ".",
-    OBSTACLE: "X",
+    OBSTACLE: "#",
     HOME: "H",
 }
 
@@ -69,7 +69,6 @@ class EditorState:
     cell_width: float = 1.0
     cell_height: float = 1.0
     grid_path: Path = DEFAULT_GRID_PATH
-
 
 def _get_rectified_frame(overlay: GPSOverlay, snapshot_path: Optional[Path] = None) -> Tuple[np.ndarray, int, int, Dict[str, int]]:
     """
@@ -146,7 +145,6 @@ def _get_rectified_frame(overlay: GPSOverlay, snapshot_path: Optional[Path] = No
     
     return rectified, rectified_width, rectified_height, offset_info
 
-
 def _rectified_to_grid_cell(
     x: float, y: float, state: EditorState
 ) -> Optional[Tuple[int, int]]:
@@ -179,7 +177,6 @@ def _rectified_to_grid_cell(
     # Return row, col
     return cell_info["row"], cell_info["col"]
 
-
 def _seed_grid(rows: int, cols: int, persisted: Sequence[Sequence[int]]) -> Grid:
     """
     Build a grid with the requested dimensions, copying any persisted values that fit.
@@ -196,6 +193,90 @@ def _seed_grid(rows: int, cols: int, persisted: Sequence[Sequence[int]]) -> Grid
             seeded[row_idx][col_idx] = int(row[col_idx])
     return seeded
 
+def _draw_header_overlay(img: np.ndarray, state: EditorState) -> np.ndarray:
+    """
+    Draw header above the image (not overlaying it) with status and instructions.
+    
+    Similar to Mermaid-Overlay tools, displays grid dimensions, cell counts, and
+    keyboard shortcuts in a dark gray header bar above the image.
+    
+    Header size and font scales with image resolution for better visibility on large displays.
+    
+    Args:
+        img: The image to add header above
+        state: Editor state containing grid and dimensions
+        
+    Returns:
+        New image with header bar above the original image
+    """
+    h, w = img.shape[:2]
+    
+    # Calculate header height based on image resolution (5-8% of height, min 80px, max 150px)
+    header_height = max(80, min(150, int(h * 0.07)))
+    
+    # Calculate font scales based on image width (scales with resolution)
+    # Base scale factors that work well for 1920px width
+    base_width = 1920.0
+    scale_factor = w / base_width
+    
+    # Font sizes scale with resolution (increased instruction font for better visibility)
+    status_font_scale = max(0.5, min(1.2, 0.6 * scale_factor))
+    instruction_font_scale = max(0.5, min(1.2, 0.7 * scale_factor))  # Increased from 0.5 to 0.7
+    
+    # Thickness scales with font size (instruction text uses thicker lines for better white visibility)
+    status_thickness = max(1, int(2 * scale_factor))
+    instruction_thickness = max(2, int(3 * scale_factor))  # Thicker than status text to ensure white appearance
+    
+    # Padding scales with resolution
+    padding_x = max(10, int(10 * scale_factor))
+    padding_y_status = max(25, int(25 * scale_factor))
+    padding_y_instruction = max(55, int(55 * scale_factor))
+    
+    # Create a new image with header space above
+    canvas = np.zeros((h + header_height, w, 3), dtype=np.uint8)
+    
+    # Draw header bar with dark gray background
+    cv2.rectangle(canvas, (0, 0), (w, header_height), (40, 40, 40), -1)
+    cv2.rectangle(canvas, (0, header_height - 1), (w, header_height), (80, 80, 80), 1)
+    
+    # Count obstacles and home positions
+    obstacle_count = sum(1 for row in state.grid for cell in row if cell == OBSTACLE)
+    home_count = sum(1 for row in state.grid for cell in row if cell == HOME)
+    
+    # Status text with grid dimensions and cell counts
+    status_text = f"Grid: {state.rows}x{state.cols} cells | Obstacles: {obstacle_count} | Home: {home_count}"
+    
+    # Instruction text with keyboard shortcuts
+    instruction_text = "Left click: Cycle cells (FREE → OBSTACLE → HOME) | 's' Save | 'i' Save image | 'f' Fullscreen | 'q' Quit"
+    
+    # Draw status text in header (white, larger font, scaled)
+    cv2.putText(
+        canvas, 
+        status_text, 
+        (padding_x, padding_y_status), 
+        cv2.FONT_HERSHEY_SIMPLEX, 
+        status_font_scale, 
+        (255, 255, 255), 
+        status_thickness, 
+        cv2.LINE_AA
+    )
+    
+    # Draw instruction text (white, larger font, scaled)
+    cv2.putText(
+        canvas, 
+        instruction_text, 
+        (padding_x, padding_y_instruction), 
+        cv2.FONT_HERSHEY_SIMPLEX, 
+        instruction_font_scale, 
+        (255, 255, 255),  # White color for maximum visibility
+        instruction_thickness, 
+        cv2.LINE_AA
+    )
+    
+    # Place original image below header
+    canvas[header_height:, :] = img
+    
+    return canvas
 
 def _draw_grid_overlay(frame, state: EditorState) -> None:
     """
@@ -275,7 +356,6 @@ def _draw_grid_overlay(frame, state: EditorState) -> None:
     # Increased from 0.4/0.6 to 0.5/0.5 for better visibility while keeping image visible
     cv2.addWeighted(tinted, 0.5, frame, 0.5, 0, dst=frame)
 
-
 def _format_grid_snapshot(grid: Grid) -> str:
     """
     Return a string representation of the grid using the display symbols with colors.
@@ -303,7 +383,6 @@ def _format_grid_snapshot(grid: Grid) -> str:
     return "\n".join(
         " ".join(format_cell(cell) for cell in row) for row in grid
     )
-
 
 def _handle_mouse(event, x, y, _flags, state: EditorState) -> None:
     """
@@ -346,7 +425,6 @@ def _handle_mouse(event, x, y, _flags, state: EditorState) -> None:
     
     print(f"[update] cell ({row}, {col}) -> {colored_symbol}")
     print(_format_grid_snapshot(state.grid))
-
 
 def run_editor(
     overlay: GPSOverlay, *, grid_path: Path | str = DEFAULT_GRID_PATH
@@ -396,7 +474,7 @@ def run_editor(
     # Store the base rectified frame (we'll draw overlays on a copy each frame)
     base_rectified_frame = rectified_frame.copy()
     
-    # Save the initial frame with grid and overlays
+    # Save the initial frame with grid and overlays (without header for cleaner saved image)
     initial_display_frame = base_rectified_frame.copy()
     _draw_grid_overlay(initial_display_frame, state)
     rectified_with_grid_path = Path("snapshot_rectified_with_grid.png")
@@ -414,7 +492,11 @@ def run_editor(
 
             # Draw grid overlay on the display frame
             _draw_grid_overlay(display_frame, state)
-            cv2.imshow(window_name, display_frame)
+            
+            # Add header overlay above the image
+            display_frame_with_header = _draw_header_overlay(display_frame, state)
+            
+            cv2.imshow(window_name, display_frame_with_header)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
@@ -424,7 +506,7 @@ def run_editor(
                 save_grid(state.grid, state.grid_path)
                 print(f"Grid saved to {state.grid_path.resolve()}")
             if key == ord("i"):
-                # Save current frame with grid and cell overlays
+                # Save current frame with grid and cell overlays (without header for cleaner saved image)
                 save_frame = display_frame.copy()
                 cv2.imwrite(str(rectified_with_grid_path), save_frame)
                 print(f"Image with grid and overlays saved to {rectified_with_grid_path}")
@@ -439,7 +521,6 @@ def run_editor(
                     print("Windowed mode")
     finally:
         cv2.destroyWindow(window_name)
-
 
 def main() -> None:
     """
@@ -458,7 +539,6 @@ def main() -> None:
     
     overlay = GPSOverlay(str(overlay_path))
     run_editor(overlay)
-
 
 if __name__ == "__main__":
     main()
