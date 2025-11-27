@@ -66,6 +66,7 @@ class EditorState:
     offset_y: int = 0 
     rectified_width: int = 0
     rectified_height: int = 0
+    header_height: int = 0
     cell_width: float = 1.0
     cell_height: float = 1.0
     grid_path: Path = DEFAULT_GRID_PATH
@@ -165,8 +166,10 @@ def _rectified_to_grid_cell(
     """
     # Convert image pixel coordinates to canvas coordinates
     # x_canvas = x_img + offset_x (as per API documentation)
+    # Account for header height (the image is drawn starting at header_height offset)
+    header_height = state.header_height
     x_canvas = x + state.offset_x
-    y_canvas = y + state.offset_y
+    y_canvas = y + state.offset_y - header_height
     
     # Use overlay API's get_grid_cell_from_rectified() method to get the grid cell
     cell_info = state.overlay.get_grid_cell_from_rectified(x_canvas, y_canvas)
@@ -276,6 +279,9 @@ def _draw_header_overlay(img: np.ndarray, state: EditorState) -> np.ndarray:
     # Place original image below header
     canvas[header_height:, :] = img
     
+    # Persist header height in state for click offset corrections
+    state.header_height = header_height
+
     return canvas
 
 def _draw_grid_overlay(frame, state: EditorState) -> None:
@@ -383,6 +389,13 @@ def _format_grid_snapshot(grid: Grid) -> str:
     return "\n".join(
         " ".join(format_cell(cell) for cell in row) for row in grid
     )
+
+def _clear_grid(state: EditorState) -> None:
+    """Reset the grid to all FREE cells and print confirmation."""
+    rows, cols = state.rows, state.cols
+    state.grid = [[FREE for _ in range(cols)] for _ in range(rows)]
+    print("[clear] grid reset to all FREE cells")
+    print(_format_grid_snapshot(state.grid))
 
 def _handle_mouse(event, x, y, _flags, state: EditorState) -> None:
     """
@@ -505,6 +518,10 @@ def run_editor(
             if key == ord("s"):
                 save_grid(state.grid, state.grid_path)
                 print(f"Grid saved to {state.grid_path.resolve()}")
+            if key == ord("c"):
+                _clear_grid(state)
+                save_grid(state.grid, state.grid_path)
+                print(f"Grid cleared and saved to {state.grid_path.resolve()}")
             if key == ord("i"):
                 # Save current frame with grid and cell overlays (without header for cleaner saved image)
                 save_frame = display_frame.copy()
